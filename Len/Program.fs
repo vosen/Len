@@ -11,46 +11,70 @@ open System.Text
 module top =
     let bar = printfn "bar"
 
-type File with
-    static member ReadAllLinesWithEndings(file: string) =
-        let fullText = File.ReadAllBytes(file)
-        let lines = ResizeArray()
-        let mutable start = 0
-        while start > -1 && start < fullText.Length - 1 do
-            let oldStart = start
-            start <- Array.IndexOf(fullText, 0x0Auy, start)
-            if start = -1 then
-                lines.Add(Encoding.UTF8.GetString(fullText, oldStart, fullText.Length - oldStart))
-            else
-                start <- start + 1
-                lines.Add(Encoding.UTF8.GetString(fullText, oldStart, (start - oldStart)))
-        lines
+[<CustomComparison>]
+[<StructuralEquality>]
+type Change =
+    | NewLine of Range.Line0 * string
+    | Insert of Range.Pos01 * string
+    member t.Column =
+        match t with
+        | NewLine _ -> -1
+        | Insert((_, col), _) -> col
+    member t.Line =
+        match t with
+        | NewLine(line, _) -> line
+        | Insert((line, _), _) -> line
+    member t.Text =
+        match t with
+        | NewLine(_, text) -> text
+        | Insert(_, text) -> text
+    interface System.IComparable with
+        member x.CompareTo(y) =
+            match y with
+            | :? Change as y ->
+                let linesDiff = x.Line.CompareTo(y.Line)
+                if linesDiff <> 0 then
+                    linesDiff
+                else
+                    x.Column.CompareTo(y.Column)
+            | _ -> failwith "wrong type"
 
 type ChangesWriter() = 
     let mutable allChanges = ResizeArray()
-    static let applyChanges (file: string) (changes: (int * Range.range * string) seq) =
-        let source = File.ReadAllLinesWithEndings(file)
-        for offset, pos, text in changes do
-            let fullOffset = offset + pos.StartColumn
-            let linesRange = source.GetRange(pos.StartLine, source.Count - pos.StartLine).ToArray()
-            let relLineIdx, endDistance = linesRange
-                                          |> Seq.scan (fun offset line -> offset - line.Length) fullOffset
-                                          |> Seq.indexed
-                                          |> Seq.find (snd >> (>) 0)
-            let line = source.[pos.StartLine + relLineIdx]
-            source.[pos.StartLine + relLineIdx] <- line.Insert(line.Length + endDistance, text)
-    member t.Push(pos: Range.range, text: string) =
-        allChanges.Add((pos, text))
+    static let applyChanges (file: string) (changes: Change seq) =
+        let source = ResizeArray(File.ReadAllLines(file))
+        let mutable lineOffset = 0
+        for line, changes in changes |> Seq.groupBy (fun c -> c.Line) do
+            let lines, inserts = changes
+                                 |> Seq.toArray
+                                 |> Array.partition (function | Change.NewLine _ -> true | Change.Insert _ -> false)
+            let mutable columnOffset = 0
+            for line in lines do
+                source.Insert(line.Line + lineOffset, line.Text)
+                lineOffset <- lineOffset + 1
+            for insert in inserts do
+                let inserted = source.[insert.Line + lineOffset].Insert(insert.Column, insert.Text)
+                source.[insert.Line + lineOffset] <-inserted
+                columnOffset <- insert.Text.Length
+        File.WriteAllLines(file, source)
+    member t.Push(file: string, change: Change) =
+        allChanges.Add((file, change))
     member t.Apply() =
         let changesByFiles = allChanges
-                             |> Seq.groupBy (fun (pos, _) -> pos.FileName)
+                             |> Seq.groupBy (fun (file, _) -> file)
                              |> Map.ofSeq
         for KeyValue(file, changes) in changesByFiles do
             changes
-            |> Seq.sortBy (fun (pos,_) -> (pos.StartLine, pos.StartColumn))
-            |> Seq.mapFold (fun offset (pos, text) -> (offset, pos, text), offset + text.Length) 0
-            |> fst
+            |> Seq.map snd
+            |> Seq.sort
             |> applyChanges file
+
+let rec isLazy (typ: FSharpType) =
+    if typ.IsAbbreviation then
+        isLazy typ.AbbreviatedType
+    else
+        let tyDef = typ.TypeDefinition
+        tyDef.AccessPath = "System" && tyDef.DisplayName = "Lazy"
 
 let rec traverse (project: FSharpCheckProjectResults) (writer: ChangesWriter) (decl: FSharpImplementationFileDeclaration) = 
     match decl with 
@@ -58,17 +82,17 @@ let rec traverse (project: FSharpCheckProjectResults) (writer: ChangesWriter) (d
         if e.IsNamespace || e.IsFSharpModule then
             subDecls |> List.iter (traverse project writer)
     | FSharpImplementationFileDeclaration.MemberOrFunctionOrValue(x, args, e) ->
-        if args = [] && not x.IsProperty && not x.IsMember && not x.IsEvent   then
+        if args = [] && not x.IsProperty && not x.IsMember && not x.IsEvent && not (isLazy x.FullType) then
             let uses = project.GetUsesOfSymbol(x) |> Async.RunSynchronously
             for symbolUse in uses do
                 if not symbolUse.IsFromDefinition then
-                    writer.Push(symbolUse.RangeAlternate.EndRange, ".Value")
+                    writer.Push(symbolUse.FileName, Change.Insert(Range.Pos.toZ symbolUse.RangeAlternate.End, ".Value"))
     | FSharpImplementationFileDeclaration.InitAction(_) -> ()
 
 [<EntryPoint>]
 let main argv =
     let x = top.bar
-    let checker = FSharpChecker.Create(keepAssemblyContents = true)
+    let checker = FSharpChecker.Create(projectCacheSize = 128, keepAssemblyContents = true)
     let options = ProjectCracker.GetProjectOptionsFromProjectFile(@"D:\Users\vosen\Documents\Visual Studio 2015\Projects\Len\Len\Len.fsproj")
     let project = checker.ParseAndCheckProject(options) |> Async.RunSynchronously
     let writer = ChangesWriter()
