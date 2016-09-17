@@ -61,11 +61,11 @@
   </ItemGroup>
   <ItemGroup>
     <Reference Include="FSharp.Compiler.Service">
-      <HintPath>..\..\..\..\..\..\..\Users\vosen\documents\visual studio 2015\Projects\Len\packages\FSharp.Compiler.Service.6.0.2\lib\net45\FSharp.Compiler.Service.dll</HintPath>
+      <HintPath>..\packages\FSharp.Compiler.Service.6.0.2\lib\net45\FSharp.Compiler.Service.dll</HintPath>
       <Private>True</Private>
     </Reference>
     <Reference Include="FSharp.Compiler.Service.ProjectCracker">
-      <HintPath>..\..\..\..\..\..\..\Users\vosen\documents\visual studio 2015\Projects\Len\packages\FSharp.Compiler.Service.ProjectCracker.6.0.2\lib\net45\FSharp.Compiler.Service.ProjectCracker.dll</HintPath>
+      <HintPath>..\packages\FSharp.Compiler.Service.ProjectCracker.6.0.2\lib\net45\FSharp.Compiler.Service.ProjectCracker.dll</HintPath>
       <Private>True</Private>
     </Reference>
     <Reference Include="mscorlib" />
@@ -74,13 +74,13 @@
     </Reference>
     <Reference Include="System" />
     <Reference Include="System.Collections.Immutable">
-      <HintPath>..\..\..\..\..\..\..\Users\vosen\documents\visual studio 2015\Projects\Len\packages\System.Collections.Immutable.1.2.0\lib\portable-net45+win8+wp8+wpa81\System.Collections.Immutable.dll</HintPath>
+      <HintPath>..\packages\System.Collections.Immutable.1.2.0\lib\portable-net45+win8+wp8+wpa81\System.Collections.Immutable.dll</HintPath>
       <Private>True</Private>
     </Reference>
     <Reference Include="System.Core" />
     <Reference Include="System.Numerics" />
     <Reference Include="System.Reflection.Metadata">
-      <HintPath>..\..\..\..\..\..\..\Users\vosen\documents\visual studio 2015\Projects\Len\packages\System.Reflection.Metadata.1.4.1-beta-24227-04\lib\portable-net45+win8\System.Reflection.Metadata.dll</HintPath>
+      <HintPath>..\packages\System.Reflection.Metadata.1.4.1-beta-24227-04\lib\portable-net45+win8\System.Reflection.Metadata.dll</HintPath>
       <Private>True</Private>
     </Reference>
   </ItemGroup>

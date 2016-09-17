@@ -1,15 +1,8 @@
 ﻿module Program
 
-open System
 open System.IO
 open Microsoft.FSharp.Compiler.SourceCodeServices
-open Microsoft.FSharp.Compiler.AbstractIL.Internal.Library
-open Microsoft.FSharp
 open Microsoft.FSharp.Compiler
-open System.Text
-
-module top =
-    let bar = printfn "bar"
 
 [<CustomComparison>]
 [<StructuralEquality>]
@@ -53,9 +46,9 @@ type ChangesWriter() =
                 source.Insert(line.Line + lineOffset, line.Text)
                 lineOffset <- lineOffset + 1
             for insert in inserts do
-                let inserted = source.[insert.Line + lineOffset].Insert(insert.Column, insert.Text)
+                let inserted = source.[insert.Line + lineOffset].Insert(insert.Column + columnOffset, insert.Text)
                 source.[insert.Line + lineOffset] <-inserted
-                columnOffset <- insert.Text.Length
+                columnOffset <- columnOffset + insert.Text.Length
         File.WriteAllLines(file, source)
     member t.Push(file: string, change: Change) =
         allChanges.Add((file, change))
@@ -76,24 +69,36 @@ let rec isLazy (typ: FSharpType) =
         let tyDef = typ.TypeDefinition
         tyDef.AccessPath = "System" && tyDef.DisplayName = "Lazy"
 
+let pushLazyDefChange (writer: ChangesWriter) (expr: FSharpExpr) =
+    let file = expr.Range.FileName
+    let startR = Range.Pos.toZ expr.Range.Start
+    let endR = Range.Pos.toZ expr.Range.End
+    writer.Push(file, Change.Insert(startR, "lazy("))
+    for line in (fst startR)+1..(fst endR) do
+        writer.Push(file, Change.Insert((line, 0), "     "))
+    writer.Push(file, Change.Insert(endR, ")"))
+
+let pushLazyUseChange (writer: ChangesWriter) (symbolUse: FSharpSymbolUse) =
+    writer.Push(symbolUse.FileName, Change.Insert(Range.Pos.toZ symbolUse.RangeAlternate.End, ".Value"))
+
 let rec traverse (project: FSharpCheckProjectResults) (writer: ChangesWriter) (decl: FSharpImplementationFileDeclaration) = 
     match decl with 
     | FSharpImplementationFileDeclaration.Entity (e, subDecls) ->
         if e.IsNamespace || e.IsFSharpModule then
             subDecls |> List.iter (traverse project writer)
-    | FSharpImplementationFileDeclaration.MemberOrFunctionOrValue(x, args, e) ->
+    | FSharpImplementationFileDeclaration.MemberOrFunctionOrValue(x, args, expr) ->
         if args = [] && not x.IsProperty && not x.IsMember && not x.IsEvent && not (isLazy x.FullType) then
+            pushLazyDefChange writer expr
             let uses = project.GetUsesOfSymbol(x) |> Async.RunSynchronously
             for symbolUse in uses do
                 if not symbolUse.IsFromDefinition then
-                    writer.Push(symbolUse.FileName, Change.Insert(Range.Pos.toZ symbolUse.RangeAlternate.End, ".Value"))
+                    pushLazyUseChange writer symbolUse
     | FSharpImplementationFileDeclaration.InitAction(_) -> ()
 
 [<EntryPoint>]
 let main argv =
-    let x = top.bar
-    let checker = FSharpChecker.Create(projectCacheSize = 128, keepAssemblyContents = true)
-    let options = ProjectCracker.GetProjectOptionsFromProjectFile(@"D:\Users\vosen\Documents\Visual Studio 2015\Projects\Len\Len\Len.fsproj")
+    let checker = FSharpChecker.Create(keepAssemblyContents = true)
+    let options = ProjectCracker.GetProjectOptionsFromProjectFile(@"..\..\Len.fsproj")
     let project = checker.ParseAndCheckProject(options) |> Async.RunSynchronously
     let writer = ChangesWriter()
     for d in project.AssemblyContents.ImplementationFiles |> List.collect (fun f -> f.Declarations) do 
