@@ -105,21 +105,26 @@ module LetSearchResult =
     let isFailure = function
         | Failure -> true
         | Success _ | SubPattern -> false
+    let fromOption = function
+        | Some x -> x
+        | None -> LetSearchResult.Failure
 
 // TASTs miss some stuff so we have to reparse everything
 let traverseForSynBinding (ast: FSharpParseFileResults) (range: Range.range) : SynBinding option =
+    let traverseBinding (range: Range.range) (binding : SynBinding) =
+        if Range.rangeContainsRange binding.RangeOfHeadPat range then
+            if binding.RangeOfHeadPat = range then
+                Success (binding)
+            else
+                SubPattern
+        else
+            Failure
     let rec traverseDecl = function
-        | SynModuleDecl.Let (_, bindings, body) ->
-            match bindings with 
-            | [ binding ] ->
-                if Range.rangeContainsRange binding.RangeOfHeadPat range then
-                    if binding.RangeOfHeadPat = range then
-                        Success (binding)
-                    else
-                        SubPattern
-                else
-                    Failure
-            | _ -> failwithf "Unexpected multiple let bindings expressions at %A" body // we don't really use this
+        | SynModuleDecl.Let (_, bindings, _) ->
+            bindings
+            |> List.map (traverseBinding range)
+            |> List.tryFind (LetSearchResult.isFailure >> not)
+            |> LetSearchResult.fromOption
         | SynModuleDecl.NestedModule(_, _, decls, _, _) -> traverseDecls decls
         | _ -> Failure
     and traverseDecls (decls: SynModuleDecls) =

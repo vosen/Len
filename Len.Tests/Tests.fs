@@ -35,3 +35,6 @@ let Internal() = testScript "Internal.fsx"
 
 [<Test>]
 let Pattern() = testScript "Pattern.fsx"
+
+[<Test>]
+let MutuallyRecursive() = testScript "MutuallyRecursive.fsx"
