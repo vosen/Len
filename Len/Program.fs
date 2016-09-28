@@ -2,6 +2,7 @@
 
 open System.IO
 open Microsoft.FSharp.Compiler.SourceCodeServices
+open Microsoft.FSharp.Compiler.SourceCodeServices.BasicPatterns
 open Microsoft.FSharp.Compiler
 open Microsoft.FSharp.Compiler.Ast
 open System.Collections.Generic
@@ -156,13 +157,18 @@ let findLetBinding (checker: FSharpChecker) (options: FSharpProjectOptions) (ran
         Some({ RhsExpr = expr.Range; ReturnInfo = retInfoRange })
     | None -> None
 
+let isNewRecord (expr: FSharpExpr) =
+    match expr with
+    | NewRecord _ -> true
+    | _ -> false
+
 let rec traverse (checker: FSharpChecker) (options: FSharpProjectOptions) (project: FSharpCheckProjectResults) (writer: ChangesWriter) (decl: FSharpImplementationFileDeclaration) = 
     match decl with 
     | FSharpImplementationFileDeclaration.Entity (e, subDecls) ->
         if e.IsNamespace || e.IsFSharpModule then
             subDecls |> List.iter (traverse checker options project writer)
     | FSharpImplementationFileDeclaration.MemberOrFunctionOrValue(x, args, expr) ->
-        if args = [] && not x.IsProperty && not x.IsMember && not x.IsEvent && not (isLazy x.FullType) && x.LogicalName <> "patternInput" then
+        if args = [] && not x.IsProperty && not x.IsMember && not x.IsEvent && not (isLazy x.FullType) && x.LogicalName <> "patternInput" && not (isNewRecord expr) then
             match findLetBinding checker options x.DeclarationLocation with
             | Some({ RhsExpr = rhsRange; ReturnInfo = retRange }) ->
                 pushLazyDefChange writer rhsRange
