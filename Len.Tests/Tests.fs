@@ -29,3 +29,6 @@ let Record() = testScript "Record.fsx"
 
 [<Test>]
 let Complex() = testScript "Complex.fsx"
+
+[<Test>]
+let Internal() = testScript "Internal.fsx"

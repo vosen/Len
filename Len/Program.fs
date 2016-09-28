@@ -100,7 +100,7 @@ let traverseForSynBinding (ast: FSharpParseFileResults) (range: Range.range) : S
     let rec traverseDecl = function
         | SynModuleDecl.Let (_, bindings, body) ->
             match bindings with 
-            | [ binding ] -> if binding.RangeOfBindingSansRhs = range then Some(binding) else None
+            | [ binding ] -> if binding.RangeOfHeadPat = range then Some(binding) else None
             | _ -> failwithf "Unexpected multiple let bindings expressions at %A" body // we don't really use this
         | SynModuleDecl.NestedModule(_, _, decls, _, _) -> traverseDecls decls
         | _ -> None
