@@ -14,7 +14,7 @@ let testScript (name: string) =
     let content = File.ReadAllText(input) // this is fairly dumb, but fsc service requires files to physically exist
     let options = checker.GetProjectOptionsFromScript(input, content) |> Async.RunSynchronously
     let project = checker.ParseAndCheckProject(options) |> Async.RunSynchronously
-    let mutable result = ""
+    let mutable result = content
     let writer = ChangesWriter(fun (_, text) -> result <- text)
     for d in project.AssemblyContents.ImplementationFiles |> List.collect (fun f -> f.Declarations) do 
         traverse checker options project writer d
@@ -32,3 +32,6 @@ let Complex() = testScript "Complex.fsx"
 
 [<Test>]
 let Internal() = testScript "Internal.fsx"
+
+[<Test>]
+let Pattern() = testScript "Pattern.fsx"

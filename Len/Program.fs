@@ -95,19 +95,37 @@ let pushRetInfoChange (writer: ChangesWriter) (retTange: Range.range) =
 let pushLazyUseChange (writer: ChangesWriter) (symbolUse: FSharpSymbolUse) =
     writer.Push(symbolUse.FileName, Change.Insert(Range.Pos.toZ symbolUse.RangeAlternate.End, ".Value"))
 
+type LetSearchResult =
+    | Success of SynBinding
+    | SubPattern
+    | Failure
+
+[<CompilationRepresentation (CompilationRepresentationFlags.ModuleSuffix)>]
+module LetSearchResult =
+    let isFailure = function
+        | Failure -> true
+        | Success _ | SubPattern -> false
+
 // TASTs miss some stuff so we have to reparse everything
-let traverseForSynBinding (ast: FSharpParseFileResults) (range: Range.range) : SynBinding =
+let traverseForSynBinding (ast: FSharpParseFileResults) (range: Range.range) : SynBinding option =
     let rec traverseDecl = function
         | SynModuleDecl.Let (_, bindings, body) ->
             match bindings with 
-            | [ binding ] -> if binding.RangeOfHeadPat = range then Some(binding) else None
+            | [ binding ] ->
+                if Range.rangeContainsRange binding.RangeOfHeadPat range then
+                    if binding.RangeOfHeadPat = range then
+                        Success (binding)
+                    else
+                        SubPattern
+                else
+                    Failure
             | _ -> failwithf "Unexpected multiple let bindings expressions at %A" body // we don't really use this
         | SynModuleDecl.NestedModule(_, _, decls, _, _) -> traverseDecls decls
-        | _ -> None
+        | _ -> Failure
     and traverseDecls (decls: SynModuleDecls) =
         List.map traverseDecl decls
-        |> List.tryFind Option.isSome
-        |> Option.bind id
+        |> List.tryFind (LetSearchResult.isFailure >> not)
+        |> Option.fold (fun _ x -> x) LetSearchResult.Failure
     let traverseModuleOrNamespace (modul: SynModuleOrNamespace) =
         let (SynModuleOrNamespace(_, _, _, decls, _, _, _, _)) = modul
         traverseDecls decls
@@ -115,16 +133,23 @@ let traverseForSynBinding (ast: FSharpParseFileResults) (range: Range.range) : S
     match ast.ParseTree.Value with
     | ParsedInput.ImplFile implFile ->
         let (ParsedImplFileInput(_, _, _, _, _, modules, _)) = implFile
-        List.pick traverseModuleOrNamespace modules
+        let searchResult = modules
+                           |> List.map traverseModuleOrNamespace
+                           |> List.tryFind (LetSearchResult.isFailure >> not)
+        match searchResult with
+        | Some(LetSearchResult.Success binding) -> Some binding
+        | Some(LetSearchResult.SubPattern) -> None
+        | _ -> failwithf "Could not find pattern for %A in AST" range
     | ParsedInput.SigFile _ -> failwith "Signature files not implemented"
 
 let findLetBinding (checker: FSharpChecker) (options: FSharpProjectOptions) (range: Range.range) =
     let path = range.FileName
     let tree = checker.ParseFileInProject(path, File.ReadAllText(path), options) |> Async.RunSynchronously
     match traverseForSynBinding tree range with 
-    | (SynBinding.Binding(_,_,_,_,_,_,_,_,retInfo,expr,_,_)) ->
+    | Some(SynBinding.Binding(_,_,_,_,_,_,_,_,retInfo,expr,_,_)) ->
         let retInfoRange = retInfo |> Option.map (fun r -> match r with | SynBindingReturnInfo.SynBindingReturnInfo(_,range,_) -> range)
-        { RhsExpr = expr.Range; ReturnInfo = retInfoRange }
+        Some({ RhsExpr = expr.Range; ReturnInfo = retInfoRange })
+    | None -> None
 
 let rec traverse (checker: FSharpChecker) (options: FSharpProjectOptions) (project: FSharpCheckProjectResults) (writer: ChangesWriter) (decl: FSharpImplementationFileDeclaration) = 
     match decl with 
@@ -132,14 +157,16 @@ let rec traverse (checker: FSharpChecker) (options: FSharpProjectOptions) (proje
         if e.IsNamespace || e.IsFSharpModule then
             subDecls |> List.iter (traverse checker options project writer)
     | FSharpImplementationFileDeclaration.MemberOrFunctionOrValue(x, args, expr) ->
-        if args = [] && not x.IsProperty && not x.IsMember && not x.IsEvent && not (isLazy x.FullType) then
-            let { RhsExpr = rhsRange; ReturnInfo = retRange } = findLetBinding checker options x.DeclarationLocation
-            pushLazyDefChange writer rhsRange
-            retRange |> Option.iter (pushRetInfoChange writer)
-            let uses = project.GetUsesOfSymbol(x) |> Async.RunSynchronously
-            for symbolUse in uses do
-                if not symbolUse.IsFromDefinition then
-                    pushLazyUseChange writer symbolUse
+        if args = [] && not x.IsProperty && not x.IsMember && not x.IsEvent && not (isLazy x.FullType) && x.LogicalName <> "patternInput" then
+            match findLetBinding checker options x.DeclarationLocation with
+            | Some({ RhsExpr = rhsRange; ReturnInfo = retRange }) ->
+                pushLazyDefChange writer rhsRange
+                retRange |> Option.iter (pushRetInfoChange writer)
+                let uses = project.GetUsesOfSymbol(x) |> Async.RunSynchronously
+                for symbolUse in uses do
+                    if not symbolUse.IsFromDefinition then
+                        pushLazyUseChange writer symbolUse
+            | None -> ()
     | FSharpImplementationFileDeclaration.InitAction(_) -> ()
 
 [<EntryPoint>]
