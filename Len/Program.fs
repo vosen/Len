@@ -99,23 +99,57 @@ let pushLazyUseChange (writer: ChangesWriter) (symbolUse: FSharpSymbolUse) =
 type LetSearchResult =
     | Success of SynBinding
     | SubPattern
+    | Trivial
     | Failure
 
 [<CompilationRepresentation (CompilationRepresentationFlags.ModuleSuffix)>]
 module LetSearchResult =
     let isFailure = function
         | Failure -> true
-        | Success _ | SubPattern -> false
+        | Success _ | SubPattern | Trivial -> false
     let fromOption = function
         | Some x -> x
         | None -> LetSearchResult.Failure
+
+let rec isTrivial (expr: SynExpr) : bool =
+    match expr with
+    | SynExpr.AddressOf(_, subExpr, _, _)
+    | SynExpr.ArrayOrListOfSeqExpr(_, subExpr, _)
+    | SynExpr.Assert(subExpr, _)
+    | SynExpr.DotGet(subExpr, _, _, _)
+    | SynExpr.Downcast(subExpr, _, _)
+    | SynExpr.InferredDowncast(subExpr, _)
+    | SynExpr.InferredUpcast(subExpr, _)
+    | SynExpr.Lazy(subExpr, _)
+    | SynExpr.Paren(subExpr, _, _, _)
+    | SynExpr.Typed(subExpr, _, _)
+    | SynExpr.TypeTest(subExpr, _, _)
+    | SynExpr.Upcast(subExpr, _, _)
+        -> isTrivial subExpr
+    | SynExpr.DotIndexedGet(subExpr, exprRange,_,_)
+        -> subExpr :: (exprRange |> List.collect (fun a -> a.Exprs)) |> areTrivial
+    | SynExpr.Tuple(exprRange,_,_)
+        -> exprRange |> areTrivial
+    | SynExpr.Const _
+    | SynExpr.Null _
+    | SynExpr.ObjExpr _
+    | SynExpr.Record _
+        -> true
+    |_ -> false
+
+and areTrivial(expr: SynExpr list) : bool =
+    not (List.exists (isTrivial >> not) expr)
 
 // TASTs miss some stuff so we have to reparse everything
 let traverseForSynBinding (ast: FSharpParseFileResults) (range: Range.range) : SynBinding option =
     let traverseBinding (range: Range.range) (binding : SynBinding) =
         if Range.rangeContainsRange binding.RangeOfHeadPat range then
             if binding.RangeOfHeadPat = range then
-                Success (binding)
+                let (SynBinding.Binding(_,_,_,_,_,_,_,_,_,expr,_,_)) = binding
+                if isTrivial expr then
+                    Trivial
+                else
+                    Success (binding)
             else
                 SubPattern
         else
@@ -144,7 +178,8 @@ let traverseForSynBinding (ast: FSharpParseFileResults) (range: Range.range) : S
                            |> List.tryFind (LetSearchResult.isFailure >> not)
         match searchResult with
         | Some(LetSearchResult.Success binding) -> Some binding
-        | Some(LetSearchResult.SubPattern) -> None
+        | Some(LetSearchResult.SubPattern)
+        | Some(LetSearchResult.Trivial) -> None
         | _ -> failwithf "Could not find pattern for %A in AST" range
     | ParsedInput.SigFile _ -> failwith "Signature files not implemented"
 
@@ -157,18 +192,13 @@ let findLetBinding (checker: FSharpChecker) (options: FSharpProjectOptions) (ran
         Some({ RhsExpr = expr.Range; ReturnInfo = retInfoRange })
     | None -> None
 
-let isNewRecord (expr: FSharpExpr) =
-    match expr with
-    | NewRecord _ -> true
-    | _ -> false
-
 let rec traverse (checker: FSharpChecker) (options: FSharpProjectOptions) (project: FSharpCheckProjectResults) (writer: ChangesWriter) (decl: FSharpImplementationFileDeclaration) = 
     match decl with 
     | FSharpImplementationFileDeclaration.Entity (e, subDecls) ->
         if e.IsNamespace || e.IsFSharpModule then
             subDecls |> List.iter (traverse checker options project writer)
     | FSharpImplementationFileDeclaration.MemberOrFunctionOrValue(x, args, expr) ->
-        if args = [] && not x.IsProperty && not x.IsMember && not x.IsEvent && not (isLazy x.FullType) && x.LogicalName <> "patternInput" && not (isNewRecord expr) then
+        if args = [] && not x.IsProperty && not x.IsMember && not x.IsEvent && not (isLazy x.FullType) && x.LogicalName <> "patternInput" then
             match findLetBinding checker options x.DeclarationLocation with
             | Some({ RhsExpr = rhsRange; ReturnInfo = retRange }) ->
                 pushLazyDefChange writer rhsRange

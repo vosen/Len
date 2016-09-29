@@ -38,3 +38,6 @@ let Pattern() = testScript "Pattern.fsx"
 
 [<Test>]
 let MutuallyRecursive() = testScript "MutuallyRecursive.fsx"
+
+[<Test>]
+let Record2() = testScript "Record2.fsx"

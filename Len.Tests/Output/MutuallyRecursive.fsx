@@ -9,4 +9,4 @@ and private bar
     =
     foo arg1
 
-let eps : Lazy<double> = lazy(1E-20)
+let eps : double = 1E-20

@@ -1,1 +1,1 @@
-﻿let x = lazy(1)
+﻿let x = 1
