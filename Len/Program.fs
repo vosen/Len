@@ -134,6 +134,8 @@ let rec isTrivial (expr: SynExpr) : bool =
     | SynExpr.Null _
     | SynExpr.ObjExpr _
     | SynExpr.Record _
+    | SynExpr.Ident _
+    | SynExpr.LongIdent _
         -> true
     |_ -> false
 
