@@ -1,6 +1,7 @@
 ﻿module Tests
 
 open System
+open System.Reflection
 open System.IO
 open NUnit.Framework
 open Len.Program
@@ -8,8 +9,8 @@ open Microsoft.FSharp.Compiler.SourceCodeServices
 open System.Text
 
 let testScript (name: string) =
-    let input = sprintf @".\Input\%s" name
-    let output = sprintf @".\Output\%s" name
+    let input = Path.Combine(Assembly.GetExecutingAssembly().Location, @"..\Input", name)
+    let output = Path.Combine(Assembly.GetExecutingAssembly().Location, @"..\Output", name)
     let checker = FSharpChecker.Create(keepAssemblyContents = true)
     let content = File.ReadAllText(input) // this is fairly dumb, but fsc service requires files to physically exist
     let options = checker.GetProjectOptionsFromScript(input, content) |> Async.RunSynchronously
