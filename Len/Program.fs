@@ -142,11 +142,18 @@ let rec isTrivial (expr: SynExpr) : bool =
 and areTrivial(expr: SynExpr list) : bool =
     not (List.exists (isTrivial >> not) expr)
 
+let getDeclRange (binding : SynBinding) =
+    let (SynBinding.Binding(_,_,_,_,_,_,_,headPat,_,expr,_,_)) = binding
+    match headPat with
+    | SynPat.LongIdent (dotId,_,_,_, Some(_),_) -> dotId.Range
+    | _ -> binding.RangeOfHeadPat
+
 // TASTs miss some stuff so we have to reparse everything
 let traverseForSynBinding (ast: FSharpParseFileResults) (range: Range.range) : SynBinding option =
     let traverseBinding (range: Range.range) (binding : SynBinding) =
-        if Range.rangeContainsRange binding.RangeOfHeadPat range then
-            if binding.RangeOfHeadPat = range then
+        let declRange = getDeclRange binding
+        if Range.rangeContainsRange declRange range then
+            if declRange = range then
                 let (SynBinding.Binding(_,_,_,_,_,_,_,_,_,expr,_,_)) = binding
                 if isTrivial expr then
                     Trivial
@@ -194,18 +201,25 @@ let findLetBinding (checker: FSharpChecker) (options: FSharpProjectOptions) (ran
         Some({ RhsExpr = expr.Range; ReturnInfo = retInfoRange })
     | None -> None
 
-let rec traverse (checker: FSharpChecker) (options: FSharpProjectOptions) (project: FSharpCheckProjectResults) (writer: ChangesWriter) (decl: FSharpImplementationFileDeclaration) = 
+let rec traverse
+    (checker: FSharpChecker)
+    (options: FSharpProjectOptions)
+    (project: FSharpCheckProjectResults)
+    (refProjects: FSharpCheckProjectResults[])
+    (writer: ChangesWriter)
+    (decl: FSharpImplementationFileDeclaration)
+    = 
     match decl with 
     | FSharpImplementationFileDeclaration.Entity (e, subDecls) ->
         if e.IsNamespace || e.IsFSharpModule then
-            subDecls |> List.iter (traverse checker options project writer)
+            subDecls |> List.iter (traverse checker options project refProjects writer)
     | FSharpImplementationFileDeclaration.MemberOrFunctionOrValue(x, args, expr) ->
         if args = [] && not x.IsProperty && not x.IsMember && not x.IsEvent && not (isLazy x.FullType) && x.LogicalName <> "patternInput" then
             match findLetBinding checker options x.DeclarationLocation with
             | Some({ RhsExpr = rhsRange; ReturnInfo = retRange }) ->
                 pushLazyDefChange writer rhsRange
                 retRange |> Option.iter (pushRetInfoChange writer)
-                let uses = project.GetUsesOfSymbol(x) |> Async.RunSynchronously
+                let uses = refProjects |> Array.collect(fun pr -> pr.GetUsesOfSymbol(x) |> Async.RunSynchronously)
                 for symbolUse in uses do
                     if not symbolUse.IsFromDefinition then
                         pushLazyUseChange writer symbolUse
@@ -219,6 +233,6 @@ let main argv =
     let project = checker.ParseAndCheckProject(options) |> Async.RunSynchronously
     let writer = ChangesWriter(File.WriteAllText)
     for d in project.AssemblyContents.ImplementationFiles |> List.collect (fun f -> f.Declarations) do 
-        traverse checker options project writer d
+        traverse checker options project [| project |] writer d
     writer.Apply()
     0
